@@ -149,6 +149,8 @@ class LFUCache:
         while self.ttl_entries and self.ttl_entries[0][0] <= self.clock():
             entry_tuple = heapq.heappop(self.ttl_entries)
             entry = entry_tuple[1]
+            if entry.key not in self.cache:
+                continue
             freq = self.key_freq[entry.key]
             del self.cache[entry.key]
             del self.key_freq[entry.key]
