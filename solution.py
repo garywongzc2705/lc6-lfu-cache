@@ -196,35 +196,19 @@ class LFUCache:
         return self.key_freq[key]
 
     def most_frequent(self):
-        freq_counts = self._get_freq_map_entries()
         result = []
-        target_size = 5
-        for i in range(len(freq_counts) - 1, -1, -1):
-            freq_keys_tuple = freq_counts[i]
-            freq, keys = freq_keys_tuple[0], freq_keys_tuple[1]
-
-            take = min(target_size - len(result), len(keys))
-            result.extend([(key, freq) for key in reversed(list(keys.keys())[-take:])])
-            if len(result) == target_size:
-                break
-
+        for freq, keys in reversed(self._get_freq_map_entries()):
+            for key in reversed(list(keys.keys())):
+                result.append((key, freq))
+                if len(result) == 5:
+                    return result
         return result
 
     def least_frequent(self):
-        freq_counts = self._get_freq_map_entries()
-        result = []
-
-        target_size = 1
-        for i in range(len(freq_counts)):
-            freq_keys_tuple = freq_counts[i]
-            freq, keys = freq_keys_tuple[0], freq_keys_tuple[1]
-
-            take = min(target_size - len(result), len(keys))
-            result.extend([(key, freq) for key in (list(keys.keys())[:take])])
-            if len(result) == target_size:
-                break
-
-        return result[0] if len(result) == 1 else None
+        for freq, keys in self._get_freq_map_entries():
+            if keys:
+                return (next(iter(keys)), freq)
+        return None
 
     def _get_freq_map_entries(self) -> list[tuple]:
         self._sync_ttl_items()
