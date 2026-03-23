@@ -27,6 +27,8 @@ class LFUCache:
     def __init__(self, capacity) -> None:
         self.capacity = capacity
         self.clock = time.time
+        self.on_evicts = []
+        self.on_expires = []
         self._reset()
 
     def _reset(self):
@@ -75,10 +77,12 @@ class LFUCache:
         return key in self.cache
 
     def _update_ttl(self, target: CacheEntry):
+        original_size = len(self.ttl_entries)
         self.ttl_entries = [
             entry for entry in self.ttl_entries if entry[1].key != target.key
         ]
-        heapq.heapify(self.ttl_entries)
+        if original_size > len(self.ttl_entries):
+            heapq.heapify(self.ttl_entries)
 
     def _update_freqency(self, entry: CacheEntry):
         old_freq = self.key_freq[entry.key]
@@ -98,9 +102,13 @@ class LFUCache:
     def _evict(self):
         entry_tuple = self.freq_count[self.min_freq].popitem(last=False)
         key = entry_tuple[0]
+        cache_entry = self.cache[key]
+
         del self.cache[key]
         del self.key_freq[key]
         self.cache_stats["evictions"] += 1
+        for evict_cb in self.on_evicts:
+            evict_cb(key, cache_entry.val)
 
     def set_clock(self, fn):
         self.clock = fn
@@ -139,4 +147,80 @@ class LFUCache:
             if freq == self.min_freq and len(self.freq_count[freq]) == 0:
                 self.min_freq = 1
 
+            for expire_cb in self.on_expires:
+                expire_cb(entry.key, entry.val)
+
         return is_target_key_expired
+
+    def on_evict(self, fn):
+        self.on_evicts.append(fn)
+
+    def on_expire(self, fn):
+        self.on_expires.append(fn)
+
+    def remove(self, key):
+        self._sync_ttl_items()
+        if not key in self.cache:
+            return -1
+
+        entry = self.cache[key]
+        freq = self.key_freq[entry.key]
+        del self.cache[entry.key]
+        del self.key_freq[entry.key]
+        del self.freq_count[freq][entry.key]
+        self._update_ttl(entry)
+        if freq == self.min_freq and len(self.freq_count[freq]) == 0:
+            self.min_freq = 1
+        return entry.val
+
+    def frequency(self, key):
+        self._sync_ttl_items()
+        if key not in self.cache:
+            return 0
+        return self.key_freq[key]
+
+    def most_frequent(self):
+        freq_counts = self._get_freq_map_entries()
+        result = []
+        target_size = 5
+        for i in range(len(freq_counts) - 1, -1, -1):
+            freq_keys_tuple = freq_counts[i]
+            freq, keys = freq_keys_tuple[0], freq_keys_tuple[1]
+
+            if len(keys) == 0:
+                continue
+
+            take = min(target_size - len(result), len(keys))
+            result.extend([(key, freq) for key in reversed(list(keys.keys())[-take:])])
+            if len(result) == target_size:
+                break
+
+        return result
+
+    def least_frequent(self):
+        freq_counts = self._get_freq_map_entries()
+        result = []
+
+        target_size = 1
+        for i in range(len(freq_counts)):
+            freq_keys_tuple = freq_counts[i]
+            freq, keys = freq_keys_tuple[0], freq_keys_tuple[1]
+
+            if len(keys) == 0:
+                continue
+
+            take = min(target_size - len(result), len(keys))
+            result.extend([(key, freq) for key in (list(keys.keys())[:take])])
+            if len(result) == target_size:
+                break
+
+        return result[0] if len(result) == 1 else None
+
+    def _get_freq_map_entries(self) -> list[tuple]:
+        self._sync_ttl_items()
+        freq_counts = []
+        for freq, keys in self.freq_count.items():
+            freq_counts.append((freq, keys))
+
+        freq_counts = sorted(freq_counts)
+        return freq_counts
