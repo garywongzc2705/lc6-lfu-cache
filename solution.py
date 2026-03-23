@@ -17,10 +17,10 @@ import time
 
 
 class CacheEntry:
-    def __init__(self, key, val, ttl=None):
+    def __init__(self, key, val, expires_at=None):
         self.key = key
         self.val = val
-        self.ttl = ttl
+        self.expires_at = expires_at
 
 
 class LFUCache:
@@ -54,19 +54,27 @@ class LFUCache:
 
     def put(self, key, value, ttl=None):
         self._sync_ttl_items()
+        is_new = True
         if key not in self.cache and len(self.cache) == self.capacity:
             self._evict()
 
         if key in self.cache:
+            is_new = False
             self._update_ttl(self.cache[key])
 
-        entry = self.cache[key] if key in self.cache else CacheEntry(key, value, ttl)
+        entry = (
+            self.cache[key]
+            if key in self.cache
+            else CacheEntry(key, value, self.clock() + ttl if ttl else None)
+        )
         self._update_freqency(entry)
         entry.val = value
         self.cache[key] = entry
 
         if ttl:
             heapq.heappush(self.ttl_entries, (self.clock() + ttl, entry))
+
+        return is_new
 
     def size(self):
         self._sync_ttl_items()
@@ -220,3 +228,78 @@ class LFUCache:
             [(freq, keys) for freq, keys in self.freq_count.items() if keys]
         )
         return freq_counts
+
+    def warm(self, entries):
+        pre_evictions = self.cache_stats["evictions"]
+        inserted, skipped = 0, 0
+
+        for entry in entries:
+            key = entry[0]
+            value = entry[1]
+            ttl = entry[2] if len(entry) > 2 else None
+
+            if key in self.cache:
+                skipped += 1
+                continue
+
+            self.put(key, value, ttl)
+            inserted += 1
+
+        evicted = self.cache_stats["evictions"] - pre_evictions
+        return {"inserted": inserted, "skipped": skipped, "evicted": evicted}
+
+    def snapshot(self):
+        self._sync_ttl_items()
+        cache_stats = self.stats()
+        freq_counts = self._get_freq_map_entries()
+        entries = []
+        for i in range(len(freq_counts) - 1, -1, -1):
+            freq_keys_tuple = freq_counts[i]
+
+            freq, keys = freq_keys_tuple[0], freq_keys_tuple[1]
+            for key in keys:
+                entry = self.cache[key]
+                entries.append(
+                    {
+                        "key": entry.key,
+                        "value": entry.val,
+                        "frequency": freq,
+                        "expires_at": entry.expires_at,
+                    }
+                )
+
+        return {"entries": entries, "capacity": self.capacity, "stats": cache_stats}
+
+    def restore(self, snapshot):
+        if (
+            "entries" not in snapshot
+            or "capacity" not in snapshot
+            or "stats" not in snapshot
+        ):
+            raise ValueError("invalid snapshot format")
+
+        self._reset()
+        self.capacity = snapshot["capacity"]
+        self.cache_stats = {**snapshot["stats"]}
+        self.cache_stats.pop("hit_rate", None)  # hit_rate is derived, not stored
+
+        now = self.clock()
+        min_freq = float("inf")
+
+        for e in snapshot["entries"]:
+            expires_at = e.get("expires_at")
+            if expires_at is not None and expires_at <= now:
+                continue  # skip already expired
+
+            key = e["key"]
+            freq = e["frequency"]
+            entry = CacheEntry(key, e["value"], expires_at)
+            self.cache[key] = entry
+            self.key_freq[key] = freq
+            self.freq_count[freq][key] = key
+            min_freq = min(min_freq, freq)
+
+            if expires_at is not None:
+                heapq.heappush(self.ttl_entries, (expires_at, entry))
+
+        self.min_freq = min_freq if min_freq != float("inf") else 1
