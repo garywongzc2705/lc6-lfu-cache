@@ -187,9 +187,6 @@ class LFUCache:
             freq_keys_tuple = freq_counts[i]
             freq, keys = freq_keys_tuple[0], freq_keys_tuple[1]
 
-            if len(keys) == 0:
-                continue
-
             take = min(target_size - len(result), len(keys))
             result.extend([(key, freq) for key in reversed(list(keys.keys())[-take:])])
             if len(result) == target_size:
@@ -206,9 +203,6 @@ class LFUCache:
             freq_keys_tuple = freq_counts[i]
             freq, keys = freq_keys_tuple[0], freq_keys_tuple[1]
 
-            if len(keys) == 0:
-                continue
-
             take = min(target_size - len(result), len(keys))
             result.extend([(key, freq) for key in (list(keys.keys())[:take])])
             if len(result) == target_size:
@@ -222,5 +216,7 @@ class LFUCache:
         for freq, keys in self.freq_count.items():
             freq_counts.append((freq, keys))
 
-        freq_counts = sorted(freq_counts)
+        freq_counts = sorted(
+            [(freq, keys) for freq, keys in self.freq_count.items() if keys]
+        )
         return freq_counts
