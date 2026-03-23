@@ -61,6 +61,8 @@ class LFUCache:
         if key in self.cache:
             is_new = False
             self._update_ttl(self.cache[key])
+        else:
+            self.min_freq = 1
 
         entry = (
             self.cache[key]
@@ -102,7 +104,9 @@ class LFUCache:
             del self.freq_count[old_freq][entry.key]
 
             if len(self.freq_count) == 0:
-                self.min_freq = 1
+                self.min_freq = (
+                    min(self.key_freq.values()) if self.key_freq else float("inf")
+                )
 
         if old_freq == self.min_freq and len(self.freq_count[old_freq]) == 0:
             self.min_freq = old_freq + 1
@@ -153,7 +157,9 @@ class LFUCache:
             if target_key == entry.key:
                 is_target_key_expired = True
             if freq == self.min_freq and len(self.freq_count[freq]) == 0:
-                self.min_freq = 1
+                self.min_freq = (
+                    min(self.key_freq.values()) if self.key_freq else float("inf")
+                )
 
             for expire_cb in self.on_expires:
                 expire_cb(entry.key, entry.val)
@@ -178,7 +184,9 @@ class LFUCache:
         del self.freq_count[freq][entry.key]
         self._update_ttl(entry)
         if freq == self.min_freq and len(self.freq_count[freq]) == 0:
-            self.min_freq = 1
+            self.min_freq = (
+                min(self.key_freq.values()) if self.key_freq else float("inf")
+            )
         return entry.val
 
     def frequency(self, key):
